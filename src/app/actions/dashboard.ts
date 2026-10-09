@@ -1,46 +1,72 @@
 "use server"
 
 import { prisma } from "@/lib/prisma"
+import { unstable_cache } from "next/cache"
 import { startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, eachDayOfInterval, format, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { requireAdmin } from "@/lib/server-auth"
+
+// Totais de clientes/pets mudam pouco: cache de 60s evita 2 COUNTs a cada abertura/refresh do dashboard.
+const getCachedTotals = unstable_cache(
+  async () => {
+    const [totalClients, totalPets] = await Promise.all([
+      prisma.client.count({ where: { isActive: true } }),
+      prisma.pet.count({ where: { isActive: true } }),
+    ])
+    return { totalClients, totalPets }
+  },
+  ["dashboard-totals"],
+  { revalidate: 60 }
+)
+
+// Só os campos necessários para somar preços (nada de linhas completas / joins largos).
+const priceSelect = {
+  service: { select: { price: true } },
+  services: { select: { price: true } },
+} as const
+
+type WithPrices = {
+  service?: { price: number } | null
+  services?: { price: number }[]
+}
+
+function sumPrices(app: WithPrices) {
+  const svcs = app.services?.length ? app.services : (app.service ? [app.service] : [])
+  return svcs.reduce((acc, curr) => acc + curr.price, 0)
+}
 
 export async function getDashboardKPIs(dateStr: string) {
   await requireAdmin();
   const targetDate = new Date(dateStr) // Assume this is the start of the local day or mid-day
   const sDay = startOfDay(targetDate)
   const eDay = endOfDay(targetDate)
-  
-  const appointmentsToday = await prisma.appointment.findMany({
-    where: { startTime: { gte: sDay, lte: eDay } },
-    include: { services: true, service: true } // support multiple services
-  })
 
-  const totalClients = await prisma.client.count({ where: { isActive: true } })
-  const totalPets = await prisma.pet.count({ where: { isActive: true } })
+  const [appointmentsToday, totals] = await Promise.all([
+    prisma.appointment.findMany({
+      where: { startTime: { gte: sDay, lte: eDay } },
+      select: { status: true, ...priceSelect },
+    }),
+    getCachedTotals(),
+  ])
 
   const confirmedCount = appointmentsToday.filter(a => a.status === 'CONFIRMADO').length
   const pendingCount = appointmentsToday.filter(a => a.status === 'AGENDADO').length
-  
+
   // Total Revenue Today (Only count non-canceled)
-  const todayRevenue = appointmentsToday.reduce((acc, curr) => {
-    if (curr.status === 'CANCELADO') return acc
-    const svcs = curr.services?.length ? curr.services : (curr.service ? [curr.service] : [])
-    const servicesPrice = svcs.reduce((sAcc, sCurr) => sAcc + sCurr.price, 0)
-    return acc + servicesPrice
-  }, 0)
+  const active = appointmentsToday.filter(a => a.status !== 'CANCELADO')
+  const todayRevenue = active.reduce((acc, curr) => acc + sumPrices(curr), 0)
 
   // Has any revenue-generating appointment today?
-  const hasFinalized = appointmentsToday.some(a => a.status !== 'CANCELADO')
+  const hasFinalized = active.length > 0
 
   return {
     todayRevenue,
     hasFinalized,
-    totalAppointments: appointmentsToday.filter(a => a.status !== 'CANCELADO').length,
+    totalAppointments: active.length,
     confirmedCount,
     pendingCount,
-    totalClients,
-    totalPets
+    totalClients: totals.totalClients,
+    totalPets: totals.totalPets
   }
 }
 
@@ -55,11 +81,14 @@ export async function getDashboardUpcomingAppointments(dateStr: string) {
       startTime: { gte: sDay, lte: eDay },
       status: { not: 'CANCELADO' }
     },
-    include: { 
-      pet: { include: { client: { include: { user: true } } } },
-      services: true,
-      service: true,
-      employee: { include: { user: true } }
+    select: { 
+      id: true,
+      startTime: true,
+      status: true,
+      pet: { select: { name: true, species: true, breed: true, client: { select: { user: { select: { name: true } } } } } },
+      services: { select: { name: true } },
+      service: { select: { name: true } },
+      employee: { select: { user: { select: { name: true } } } }
     },
     orderBy: { startTime: 'asc' }
   })
@@ -111,7 +140,7 @@ export async function getDashboardRevenueChart(period: 'hoje' | '7dias' | 'esteM
       startTime: { gte: start, lte: end },
       status: { not: 'CANCELADO' }
     },
-    include: { services: true, service: true },
+    select: { startTime: true, ...priceSelect },
     orderBy: { startTime: 'asc' }
   })
 
@@ -128,10 +157,7 @@ export async function getDashboardRevenueChart(period: 'hoje' | '7dias' | 'esteM
 
   appointments.forEach(app => {
     const key = format(new Date(app.startTime), formatStr, { locale: ptBR })
-    const svcs = app.services?.length ? app.services : (app.service ? [app.service] : [])
-    const price = svcs.reduce((acc, curr) => acc + curr.price, 0)
-    
-    dataMap.set(key, (dataMap.get(key) || 0) + price)
+    dataMap.set(key, (dataMap.get(key) || 0) + sumPrices(app))
   })
 
   const chartData = Array.from(dataMap.entries()).map(([name, value]) => ({ name, value }))

@@ -10,9 +10,9 @@ export async function getClients(q?: string) {
   return await prisma.client.findMany({
     where: q ? {
       OR: [
-        { user: { name: { contains: q } } },
+        { user: { name: { contains: q, mode: 'insensitive' } } },
         { whatsapp: { contains: q } },
-        { pets: { some: { name: { contains: q } } } }
+        { pets: { some: { name: { contains: q, mode: 'insensitive' } } } }
       ]
     } : undefined,
     include: {

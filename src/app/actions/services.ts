@@ -9,8 +9,8 @@ export async function getServices(q?: string) {
   return await prisma.service.findMany({
     where: q ? {
       OR: [
-        { name: { contains: q } },
-        { description: { contains: q } }
+        { name: { contains: q, mode: 'insensitive' } },
+        { description: { contains: q, mode: 'insensitive' } }
       ]
     } : undefined,
     include: {

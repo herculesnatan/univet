@@ -70,6 +70,8 @@ model Pet {
   client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
   appointments Appointment[]
   recurrences  Recurrence[]
+
+  @@index([clientId])
 }
 
 model Service {
@@ -107,6 +109,10 @@ model Appointment {
   services    Service[] @relation("AppointmentServices")
   employee    Employee @relation(fields: [employeeId], references: [id])
   payment     Payment?
+
+  @@index([startTime])
+  @@index([employeeId, startTime])
+  @@index([petId])
 }
 
 model Payment {

@@ -33,10 +33,10 @@ export async function getColaboradorAgendaData(startIso: string, endIso: string)
       },
     },
     include: {
-      pet: { include: { client: { include: { user: true } } } },
+      pet: { include: { client: { include: { user: { select: { name: true } } } } } },
       services: true,
       service: true,
-      employee: { include: { user: true } },
+      employee: { include: { user: { select: { name: true } } } },
     },
     orderBy: {
       startTime: 'asc'
@@ -59,10 +59,10 @@ export async function getAgendaData(startIso: string, endIso: string) {
       },
     },
     include: {
-      pet: { include: { client: { include: { user: true } } } },
+      pet: { include: { client: { include: { user: { select: { name: true } } } } } },
       services: true,
       service: true, // Legacy (optional)
-      employee: { include: { user: true } },
+      employee: { include: { user: { select: { name: true } } } },
     },
     orderBy: { startTime: 'asc' }
   })
@@ -72,31 +72,35 @@ export async function getAgendaData(startIso: string, endIso: string) {
 
 export async function getAgendaOptions() {
   await requireAdmin();
-  const pets = await prisma.pet.findMany({
-    where: { isActive: true },
-    include: { client: { include: { user: true } } },
-    orderBy: { name: 'asc' }
-  })
-
-  const services = await prisma.service.findMany({
-    where: { isActive: true },
-    include: { employees: true },
-    orderBy: { name: 'asc' }
-  })
+  // As 3 consultas são independentes: rodam em paralelo (1 ida ao banco em vez de 3 em sequência).
+  // Nunca devolvemos o registro completo de User (inclui hash de senha) para o navegador.
+  const [pets, services, employeesFound] = await Promise.all([
+    prisma.pet.findMany({
+      where: { isActive: true },
+      include: { client: { include: { user: { select: { name: true } } } } },
+      orderBy: { name: 'asc' }
+    }),
+    prisma.service.findMany({
+      where: { isActive: true },
+      include: { employees: true },
+      orderBy: { name: 'asc' }
+    }),
+    prisma.employee.findMany({
+      where: { isActive: true },
+      include: { user: { select: { name: true } } },
+      orderBy: { user: { name: 'asc' } }
+    }),
+  ])
 
   // Garantir que existe pelo menos um funcionário para o protótipo
-  let employees = await prisma.employee.findMany({
-    where: { isActive: true },
-    include: { user: true },
-    orderBy: { user: { name: 'asc' } }
-  })
+  let employees = employeesFound
 
   if (employees.length === 0) {
     const admin = await prisma.user.findFirst({ where: { role: 'ADMIN' } })
     if (admin) {
       const newEmp = await prisma.employee.create({
         data: { userId: admin.id },
-        include: { user: true }
+        include: { user: { select: { name: true } } }
       })
       employees = [newEmp]
     }

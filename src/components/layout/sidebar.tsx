@@ -41,6 +41,8 @@ const routes = [
     icon: Settings,
     href: "/admin/config",
     color: "text-gray-500",
+    // Ainda não implementada: oculta do menu. Mude para `true` quando a tela estiver pronta.
+    enabled: false,
   },
 ]
 
@@ -62,7 +64,7 @@ export function Sidebar() {
           </h1>
         </Link>
         <div className="space-y-1">
-          {routes.map((route) => (
+          {routes.filter((route) => route.enabled !== false).map((route) => (
             <Link
               key={route.href}
               href={route.href}
