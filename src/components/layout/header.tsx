@@ -26,7 +26,17 @@ export function Header() {
           {session?.user?.name?.charAt(0) || "U"}
         </div>
         
-        <Button variant="ghost" size="icon" onClick={() => signOut({ callbackUrl: '/login' })} title="Sair">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={async () => {
+            // Encerra a sessão sem deixar o NextAuth montar a URL de retorno a partir de NEXTAUTH_URL;
+            // o redirecionamento acontece no mesmo domínio em que o usuário está.
+            await signOut({ redirect: false })
+            window.location.href = "/login"
+          }}
+          title="Sair"
+        >
           <LogOut className="w-5 h-5 text-slate-500 hover:text-destructive" />
         </Button>
       </div>
